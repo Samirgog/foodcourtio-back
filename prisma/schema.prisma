@@ -1,0 +1,430 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  SUPERADMIN
+  RESTAURANT_OWNER
+  EMPLOYEE
+  CUSTOMER
+}
+
+enum OrderStatus {
+  PENDING
+  PREPARING
+  READY
+  COMPLETED
+  CANCELLED
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+enum RestaurantStatus {
+  DRAFT
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum EmployeeRole {
+  MANAGER
+  COOK
+  WAITER
+  CASHIER
+}
+
+enum ShiftStatus {
+  SCHEDULED
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum InviteLinkStatus {
+  ACTIVE
+  USED
+  EXPIRED
+  REVOKED
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+  READ
+}
+
+enum NotificationType {
+  ORDER_CREATED
+  ORDER_UPDATED
+  ORDER_READY
+  SHIFT_REMINDER
+  PAYMENT_RECEIVED
+  EMPLOYEE_INVITE
+  SYSTEM_ALERT
+}
+
+enum AITaskStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+model User {
+  id         String   @id @default(cuid())
+  telegramId String   @unique
+  role       Role
+  name       String
+  username   String?
+  avatar     String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  // Relations
+  restaurants   Restaurant[]
+  employees     Employee[]
+  customers     Customer[]
+  orders        Order[]
+  inviteLinks   InviteLink[]
+  notifications Notification[]
+  aiTasks       AITask[]
+
+  @@map("users")
+}
+
+model Foodcourt {
+  id          String  @id @default(cuid())
+  name        String
+  address     String
+  description String?
+  layout      Json? // JSON for map layout with restaurants and tables
+  isActive    Boolean @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Configuration
+  commissionRate Float @default(0.10) // 10% default commission
+  
+  // Relations
+  restaurants Restaurant[]
+  tables      Table[]
+  customers   Customer[]
+
+  @@map("foodcourts")
+}
+
+model Restaurant {
+  id           String           @id @default(cuid())
+  name         String
+  description  String?
+  location     Json? // Restaurant location data
+  logo         String?
+  banner       String?
+  status       RestaurantStatus @default(DRAFT)
+  isPublished  Boolean          @default(false)
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  // Relations
+  foodcourtId String
+  foodcourt   Foodcourt @relation(fields: [foodcourtId], references: [id], onDelete: Cascade)
+  
+  ownerId String
+  owner   User   @relation(fields: [ownerId], references: [id])
+
+  categories  Category[]
+  employees   Employee[]
+  orders      Order[]
+  inviteLinks InviteLink[] @relation("RestaurantInviteLinks")
+  aiTasks     AITask[]
+
+  @@map("restaurants")
+}
+
+model Category {
+  id          String  @id @default(cuid())
+  name        String
+  description String?
+  priority    Int     @default(0)
+  isActive    Boolean @default(true)
+  isDraft     Boolean @default(true) // For autosave functionality
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  restaurantId String
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  
+  products Product[]
+
+  @@map("categories")
+}
+
+model Product {
+  id          String  @id @default(cuid())
+  name        String
+  description String?
+  image       String?
+  price       Float
+  weight      String?
+  volume      String?
+  variants    Json? // JSON for up to 3 product parameters/variants
+  isAvailable Boolean @default(true)
+  priority    Int     @default(0)
+  isDraft     Boolean @default(true) // For autosave functionality
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  
+  orderItems OrderItem[]
+
+  @@map("products")
+}
+
+model Table {
+  id       String @id @default(cuid())
+  number   String
+  position Json? // JSON for position on the map
+  qrCode   String @unique // QR code content for this table
+  isActive Boolean @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  foodcourtId String
+  foodcourt   Foodcourt @relation(fields: [foodcourtId], references: [id], onDelete: Cascade)
+  
+  orders Order[]
+
+  @@map("tables")
+}
+
+model Employee {
+  id          String       @id @default(cuid())
+  name        String
+  phone       String
+  email       String?
+  role        EmployeeRole
+  hourlyWage  Int? // Wage in cents
+  schedule    Json? // Weekly schedule
+  activeShift Boolean @default(false)
+  joinedAt    DateTime?
+  isActive    Boolean      @default(true)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  // Relations
+  userId String? @unique
+  user   User?   @relation(fields: [userId], references: [id])
+  
+  restaurantId String
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  shifts Shift[]
+
+  @@map("employees")
+}
+
+model Customer {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+  
+  lastVisitFoodcourtId String?
+  lastVisitFoodcourt   Foodcourt? @relation(fields: [lastVisitFoodcourtId], references: [id])
+
+  @@unique([userId])
+  @@map("customers")
+}
+
+model Order {
+  id                String      @id @default(cuid())
+  orderNumber       String      @unique
+  status            OrderStatus @default(PENDING)
+  customerName      String
+  customerPhone     String
+  deliveryType      String      @default("DINE_IN")
+  paymentMethod     String?
+  specialInstructions String?
+  totalAmount       Float
+  estimatedTime     Int? // in minutes
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  // Relations
+  restaurantId String
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id])
+  
+  customerId String?
+  customer   User?   @relation(fields: [customerId], references: [id])
+  
+  tableId String?
+  table   Table? @relation(fields: [tableId], references: [id])
+
+  items   OrderItem[]
+  payment Payment?
+
+  @@map("orders")
+}
+
+model OrderItem {
+  id                  String @id @default(cuid())
+  quantity            Int
+  unitPrice           Float
+  totalPrice          Float
+  variant             String?
+  specialInstructions String?
+  createdAt           DateTime @default(now())
+
+  // Relations
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
+
+  @@map("order_items")
+}
+
+model Payment {
+  id                String        @id @default(cuid())
+  amount            Float
+  commission        Float // Platform commission amount
+  netAmount         Float // Amount after commission
+  status            PaymentStatus @default(PENDING)
+  provider          String // 'stripe' or 'yookassa'
+  method            String? // Payment method
+  currency          String        @default("USD")
+  transactionId     String?
+  externalPaymentId String? // External provider payment ID
+  paymentUrl        String? // Payment URL for user
+  commissionAmount  Float? // Commission amount for aggregation
+  commissionRate    Float? // Commission rate used
+  metadata          Json? // Provider-specific data
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  // Relations
+  orderId String @unique
+  order   Order  @relation(fields: [orderId], references: [id])
+
+  @@map("payments")
+}
+
+model InviteLink {
+  id          String           @id @default(cuid())
+  token       String           @unique
+  role        EmployeeRole
+  status      InviteLinkStatus @default(ACTIVE)
+  expiresAt   DateTime
+  hourlyWage  Int? // Wage in cents
+  notes       String?
+  maxUses     Int              @default(1)
+  usedCount   Int              @default(0)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  // Relations
+  restaurantId String
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade, name: "RestaurantInviteLinks")
+
+  createdBy String
+  creator   User   @relation(fields: [createdBy], references: [id])
+
+  @@map("invite_links")
+}
+
+model Shift {
+  id              String      @id @default(cuid())
+  startTime       DateTime
+  endTime         DateTime
+  actualStartTime DateTime?
+  actualEndTime   DateTime?
+  breakDuration   Int?        @default(0) // in minutes
+  notes           String?
+  status          ShiftStatus @default(SCHEDULED)
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  // Relations
+  employeeId String
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@map("shifts")
+}
+
+model Notification {
+  id         String             @id @default(cuid())
+  type        NotificationType
+  template    String?
+  title       String
+  message     String
+  data        Json?
+  recipient   Json? // Recipient information
+  deliveryResults Json? // Delivery status for each channel
+  recipientId String? // For filtering
+  relatedEntityId String? // Related entity ID
+  priority    Int @default(0)
+  status      NotificationStatus @default(PENDING)
+  channels   String[] // ['telegram', 'email', 'sms', 'push', 'in_app']
+  scheduledAt DateTime?
+  sentAt     DateTime?
+  readAt     DateTime?
+  createdAt  DateTime           @default(now())
+  updatedAt  DateTime           @updatedAt
+
+  // Relations
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notifications")
+}
+
+model AITask {
+  id          String        @id @default(cuid())
+  type        String // 'menu_generation', 'product_description', etc.
+  taskType    String? // For backwards compatibility
+  prompt      String
+  response    String?
+  results     Json? // Task results
+  parameters  Json? // Task parameters
+  errorMessage String? // Error details
+  progress    Int @default(0) // Task progress percentage
+  completedAt DateTime? // When task was completed
+  createdBy   String? // Who created the task
+  status      AITaskStatus  @default(PENDING)
+  metadata    Json?
+  tokensUsed  Int?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  // Relations
+  restaurantId String?
+  restaurant   Restaurant? @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("ai_tasks")
+}
