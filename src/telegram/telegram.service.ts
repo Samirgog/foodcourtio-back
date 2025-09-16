@@ -12,6 +12,7 @@ import {
 } from './dto/telegram.dto';
 import { User, Role } from '@prisma/client';
 import axios from 'axios';
+import { TelegramAuthService } from './telegram-auth.service';
 
 @Injectable()
 export class TelegramService {
@@ -23,6 +24,7 @@ export class TelegramService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
+    private readonly telegramAuthService: TelegramAuthService,
   ) {
     this.botToken = this.configService.get<string>('TELEGRAM_BOT_TOKEN') || '';
     this.apiUrl = `https://api.telegram.org/bot${this.botToken}`;
@@ -229,14 +231,32 @@ export class TelegramService {
     const user = await this.findUserByTelegramId(telegramUserId);
     
     if (user) {
-      await this.sendMessage(
-        chatId,
-        `Welcome back, ${user.name}! 👋\n\nUse /help to see available commands.`
-      );
+      // Check if user is authorized to access the admin panel
+      const authResult = await this.telegramAuthService.isUserAuthorized(telegramUserId);
+      
+      if (authResult.authorized) {
+        await this.sendMessage(
+          chatId,
+          `Welcome back, ${user.name}! 👋\n\nYou have access to the admin panel.\nUse /help to see available commands.`
+        );
+      } else {
+        await this.sendMessage(
+          chatId,
+          `Welcome back, ${user.name}! 👋
+
+${authResult.reason}
+
+You can still receive notifications, but you won't have access to admin features.`
+        );
+      }
     } else {
       await this.sendMessage(
         chatId,
-        `Welcome to FoodcourtIO Bot! 🍔\n\nTo get started, please log into the FoodcourtIO app to link your account.\n\nOnce linked, you'll be able to receive order notifications and manage your work through this bot.`
+        `Welcome to FoodcourtIO Bot! 🍔
+
+To get started, please log into the FoodcourtIO app to link your account.
+
+Once linked, you'll be able to receive order notifications and manage your work through this bot.`
       );
     }
   }
@@ -486,7 +506,11 @@ export class TelegramService {
 
     await this.sendMessage(
       chatId,
-      `✅ Clocked out successfully!\n\nTime: ${now.toLocaleTimeString()}\nHours worked: ${hoursWorked.toFixed(2)}\nGood job today! 👏`
+      `✅ Clocked out successfully!
+
+Time: ${now.toLocaleTimeString()}
+Hours worked: ${hoursWorked.toFixed(2)}
+Good job today! 👏`
     );
 
     this.logger.log(`Employee ${employee.name} clocked out via bot`);
@@ -578,7 +602,12 @@ export class TelegramService {
 
     if (!order) return;
 
-    const message = `🔔 *New Order Received!*\n\nOrder #${order.orderNumber}\nCustomer: ${order.customerName}\nItems: ${order.items.length}\nTotal: $${(order.totalAmount / 100).toFixed(2)}`;
+    const message = `🔔 *New Order Received!*
+
+Order #${order.orderNumber}
+Customer: ${order.customerName}
+Items: ${order.items.length}
+Total: $${(order.totalAmount / 100).toFixed(2)}`;
 
     const buttons = [
       { text: '👁️ View Details', callback_data: `view_order:${order.id}` },

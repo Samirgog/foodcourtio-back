@@ -6,6 +6,10 @@ import {
   UseGuards,
   HttpStatus,
   Headers,
+  Query,
+  Res,
+  Req,
+  Logger,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -20,6 +24,7 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Public } from '../auth/decorators/public.decorator';
 import { TelegramService } from './telegram.service';
+import { TelegramAuthService } from './telegram-auth.service';
 import {
   TelegramWebhookDto,
   SendNotificationDto,
@@ -29,11 +34,17 @@ import {
   TelegramBotStatsDto,
 } from './dto/telegram.dto';
 import { Role, User } from '@prisma/client';
+import { Response, Request } from 'express';
 
 @ApiTags('Telegram Bot')
 @Controller('telegram')
 export class TelegramController {
-  constructor(private readonly telegramService: TelegramService) {}
+  private readonly logger = new Logger(TelegramController.name);
+
+  constructor(
+    private readonly telegramService: TelegramService,
+    private readonly telegramAuthService: TelegramAuthService,
+  ) {}
 
   @Post('webhook')
   @Public()
@@ -411,5 +422,62 @@ export class TelegramController {
         },
       ],
     };
+  }
+
+  @Get('auth/redirect')
+  @Public()
+  @ApiExcludeEndpoint()
+  async handleAuthRedirect(
+    @Query('initData') initData: string,
+    @Res() res: Response,
+    @Req() req: Request,
+  ) {
+    try {
+      // Parse the initData to extract user information
+      // In a real implementation, you would verify the initData signature
+      // For now, we'll just extract the user ID from the initData
+      if (!initData) {
+        return res.status(400).json({ error: 'Missing initData parameter' });
+      }
+
+      // Extract user ID from initData (simplified for this example)
+      // In a real implementation, you would properly parse and verify the initData
+      const userData = new URLSearchParams(initData);
+      const userJson = userData.get('user');
+      
+      if (!userJson) {
+        return res.status(400).json({ error: 'Invalid initData format' });
+      }
+
+      const userObj = JSON.parse(userJson);
+      const telegramId = userObj.id?.toString();
+
+      if (!telegramId) {
+        return res.status(400).json({ error: 'Could not extract Telegram ID from initData' });
+      }
+
+      // Check if user is authorized
+      const authResult = await this.telegramAuthService.isUserAuthorized(telegramId);
+
+      if (!authResult.authorized) {
+        return res.status(403).json({ 
+          error: 'Access denied', 
+          reason: authResult.reason 
+        });
+      }
+
+      // Create a session for the user
+      const session = await this.telegramAuthService.createUserSession(authResult.user!);
+      
+      // Generate redirect URL with session token
+      const adminPanelUrl = process.env.ADMIN_PANEL_URL || 'http://localhost:3000';
+      const redirectUrl = `${adminPanelUrl}/auth/telegram/callback?sessionId=${session.sessionId}&userId=${authResult.user!.id}`;
+      
+      // Redirect to admin panel
+      return res.redirect(redirectUrl);
+    } catch (error) {
+      this.logger.error('Error handling auth redirect', error.stack);
+      return res.status(500).json({ error: 'Internal server error' });
+    }
   }
 }
